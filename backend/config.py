@@ -50,10 +50,9 @@ class Config:
     
     # CORS Configuration (for local development)
     ALLOWED_ORIGINS = [
-        "http://localhost:8001",
-        "http://127.0.0.1:8001",
         "https://localhost:8001",
         "https://127.0.0.1:8001",
+        "https://10.81.169.155:8001",
     ]
     
     @classmethod

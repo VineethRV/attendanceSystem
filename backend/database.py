@@ -21,6 +21,8 @@ from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
 from config import config
 
+print("USING DATABASE_URL =", config.DATABASE_URL)
+
 # Create database engine
 engine = create_engine(config.DATABASE_URL, echo=False)
 

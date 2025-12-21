@@ -9,13 +9,14 @@
 <body>
     <div class="container">
         <header>
-            <h1>🔐 Admin Panel</h1>
-            <p class="subtitle">Attendance Management</p>
+            <h1>📊 Admin Control Panel</h1>
+            <p class="subtitle">Attendance Analytics & Management</p>
         </header>
+
 
         <!-- Login Section -->
         <div id="login-section" class="card">
-            <h2>Admin Login</h2>
+            <h2>🔐 Secure Admin Login</h2>
             <div class="form-group">
                 <label for="admin-username">Username:</label>
                 <input type="text" id="admin-username" placeholder="admin">
@@ -35,9 +36,10 @@
         <div id="dashboard-section" class="hidden">
             <div class="card">
                 <div class="admin-header">
-                    <h2>Dashboard</h2>
-                    <button id="logout-btn" class="btn btn-secondary">Logout</button>
+                    <h2>📈 Attendance Dashboard</h2>
+                    <button id="logout-btn" class="btn btn-secondary">🚪 Logout</button>
                 </div>
+
 
                 <!-- Statistics -->
                 <div class="stats-grid">
@@ -75,8 +77,8 @@
                 <!-- Attendance Table -->
                 <div class="table-container">
                     <div class="table-header">
-                        <h3>Attendance Records</h3>
-                        <button id="export-btn" class="btn btn-success">📥 Export CSV</button>
+                        <h3>📋 Attendance Records</h3>
+                        <button id="export-btn" class="btn btn-success">📥 Export Attendance Reports</button>
                     </div>
                     <table id="attendance-table">
                         <thead>
@@ -106,7 +108,7 @@
                             <label for="export-end-date">End Date:</label>
                             <input type="date" id="export-end-date">
                         </div>
-                        <button id="export-range-btn" class="btn btn-success">Download CSV</button>
+                        <button id="export-range-btn" class="btn btn-success">Download Attendance Reports</button>
                     </div>
                 </div>
             </div>

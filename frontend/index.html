@@ -17,17 +17,27 @@
 
         <div class="card">
             <div id="welcome-section">
-                <h2>Welcome</h2>
+                <h2>Student Dashboard</h2>
                 <p id="student-info"></p>
                 <div class="button-group">
-                    <button id="register-btn" class="btn btn-primary">Register New Student</button>
-                    <button id="attendance-btn" class="btn btn-success">Mark Attendance</button>
+                    <button id="register-btn" class="btn btn-primary">
+                        📝 Register Student
+                    </button>
+                    <button id="attendance-btn" class="btn btn-success">
+                        ✅ Mark Attendance
+                    </button>
                 </div>
+            
                 <div class="button-group">
-                    <button id="change-id-btn" class="btn btn-secondary">Change Student ID</button>
-                    <a href="admin.html" class="btn btn-admin">Admin Panel</a>
+                    <button id="change-id-btn" class="btn btn-secondary">
+                        🔄 Change ID
+                    </button>
+                    <a href="admin.html" class="btn btn-admin">
+                        🔐 Admin Panel
+                    </a>
                 </div>
             </div>
+
 
             <!-- Registration Section -->
             <div id="registration-section" class="hidden">
@@ -86,12 +96,13 @@
         </div>
 
         <footer>
-            <p>Powered by ArcFace Face Recognition | HTTPS Secured</p>
+            <p>Powered by <strong>ArcFace AI</strong> • Secure HTTPS</p>
             <p class="config-info">
-                Threshold: <span id="threshold-display">0.80</span> | 
-                Min Matches: <span id="matches-display">2/5</span>
+                    Threshold: <span id="threshold-display">0.80</span> |
+                    Matches: <span id="matches-display">2 / 5</span>
             </p>
         </footer>
+
     </div>
 
     <!-- Load TensorFlow.js and models -->
