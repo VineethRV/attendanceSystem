@@ -17,70 +17,31 @@
 
         <div class="card">
             <div id="welcome-section">
-                <h2>Welcome</h2>
-                <p id="student-info"></p>
-                <div class="button-group">
-                    <button id="register-btn" class="btn btn-primary">Register New Student</button>
-                    <button id="attendance-btn" class="btn btn-success">Mark Attendance</button>
+                <h2>Welcome to the Attendance System</h2>
+                <p id="student-info" class="welcome-text"></p>
+                
+                <div class="home-actions">
+                    <a href="register.html" class="action-card">
+                        <div class="action-icon">📝</div>
+                        <h3>Register</h3>
+                        <p>New student? Register here with your face</p>
+                    </a>
+                    
+                    <a href="login.html" class="action-card">
+                        <div class="action-icon">🔐</div>
+                        <h3>Login</h3>
+                        <p>Already registered? Login to continue</p>
+                    </a>
+                    
+                    <a href="attendance.html" class="action-card action-primary">
+                        <div class="action-icon">✅</div>
+                        <h3>Mark Attendance</h3>
+                        <p>Verify your face and mark attendance</p>
+                    </a>
                 </div>
-                <div class="button-group">
-                    <button id="change-id-btn" class="btn btn-secondary">Change Student ID</button>
+
+                <div class="button-group admin-link">
                     <a href="admin.html" class="btn btn-admin">Admin Panel</a>
-                </div>
-            </div>
-
-            <!-- Registration Section -->
-            <div id="registration-section" class="hidden">
-                <h2>Student Registration</h2>
-                <div class="form-group">
-                    <label for="student-id-input">Enter Student ID:</label>
-                    <input 
-                        type="text" 
-                        id="student-id-input" 
-                        placeholder="1RV23CSXXX (e.g., 1RV23CS288)"
-                        pattern="1RV23CS[0-9]{3}"
-                        maxlength="11"
-                    >
-                    <small>Format: 1RV23CS001 to 1RV23CS420</small>
-                </div>
-                <button id="start-registration-btn" class="btn btn-primary">Start Registration</button>
-                <button id="cancel-registration-btn" class="btn btn-secondary">Cancel</button>
-            </div>
-
-            <!-- Camera Capture Section -->
-            <div id="camera-section" class="hidden">
-                <h2 id="camera-title">Capturing Face Images</h2>
-                <p id="capture-status">Position your face in the frame</p>
-                
-                <div class="video-container">
-                    <video id="webcam" autoplay playsinline></video>
-                    <canvas id="overlay"></canvas>
-                </div>
-
-                <div class="progress-container">
-                    <div id="progress-bar" class="progress-bar"></div>
-                    <p id="progress-text">0 / 5 images captured</p>
-                </div>
-
-                <div class="button-group">
-                    <button id="capture-btn" class="btn btn-primary hidden">Capture</button>
-                    <button id="cancel-camera-btn" class="btn btn-secondary">Cancel</button>
-                </div>
-            </div>
-
-            <!-- Attendance Verification Section -->
-            <div id="verification-section" class="hidden">
-                <h2>Attendance Verification</h2>
-                <p id="verification-status" class="status-text">Position your face in the frame and click Verify</p>
-                
-                <div class="video-container">
-                    <video id="webcam-verify" autoplay playsinline></video>
-                    <canvas id="overlay-verify"></canvas>
-                </div>
-
-                <div class="button-group">
-                    <button id="verify-btn" class="btn btn-success">Verify & Mark Attendance</button>
-                    <button id="cancel-verify-btn" class="btn btn-secondary">Cancel</button>
                 </div>
             </div>
         </div>
@@ -94,13 +55,28 @@
         </footer>
     </div>
 
-    <!-- Load TensorFlow.js and models -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7"></script>
-    
-    <!-- Load application scripts -->
     <script src="config.js"></script>
     <script src="utils.js"></script>
-    <script src="app.js"></script>
+    <script>
+        // Simple init for home page
+        document.addEventListener('DOMContentLoaded', function() {
+            // Check if functions are loaded
+            if (typeof getStudentData === 'function') {
+                const studentData = getStudentData();
+                const studentInfo = document.getElementById('student-info');
+                
+                if (studentData && studentData.usn) {
+                    studentInfo.innerHTML = `
+                        <span class="logged-in-badge">✓ Logged in as: ${studentData.name || studentData.usn}</span>
+                    `;
+                } else {
+                    studentInfo.textContent = 'Please register or login to mark attendance';
+                }
+            } else {
+                console.error('Utils not loaded properly');
+                document.getElementById('student-info').textContent = 'Please register or login to mark attendance';
+            }
+        });
+    </script>
 </body>
 </html>

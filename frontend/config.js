@@ -17,6 +17,7 @@ const CONFIG = {
     
     // Cookie settings
     COOKIE_NAME: 'attendance_student_id',
+    COOKIE_STUDENT_DATA: 'attendance_student_data',
     COOKIE_EXPIRY_DAYS: 365,
     
     // Model URLs (TensorFlow.js models)

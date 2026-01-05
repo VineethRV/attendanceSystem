@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mark Attendance - Attendance System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>✅ Mark Attendance</h1>
+            <p class="subtitle">Face Recognition Verification</p>
+        </header>
+
+        <div id="message" class="message"></div>
+
+        <div class="card">
+            <!-- Not Logged In Section -->
+            <div id="not-logged-in-section" class="hidden">
+                <div class="info-container">
+                    <div class="info-icon">⚠️</div>
+                    <h2>Login Required</h2>
+                    <p>You need to login first to mark your attendance.</p>
+                    <div class="button-group">
+                        <a href="login.html" class="btn btn-primary">Login</a>
+                        <a href="register.html" class="btn btn-secondary">Register</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Student Info Section -->
+            <div id="student-info-section" class="hidden">
+                <div class="student-info-card">
+                    <h3>👤 Student Information</h3>
+                    <div id="attendance-student-details"></div>
+                </div>
+            </div>
+
+            <!-- Verification Section -->
+            <div id="verification-section" class="hidden">
+                <h2>📸 Face Verification</h2>
+                <p id="verification-status" class="status-text">Position your face in the frame and click "Mark Attendance"</p>
+                
+                <div class="video-container">
+                    <video id="webcam-verify" autoplay playsinline></video>
+                    <canvas id="overlay-verify"></canvas>
+                </div>
+
+                <div class="button-group">
+                    <button id="verify-btn" class="btn btn-success btn-large">
+                        <span class="btn-icon">✓</span>
+                        Mark Attendance
+                    </button>
+                    <button id="cancel-verify-btn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Success Section -->
+            <div id="attendance-success-section" class="hidden">
+                <div class="success-container">
+                    <div class="success-icon">✅</div>
+                    <h2>Attendance Marked!</h2>
+                    <p id="attendance-success-message"></p>
+                    <div class="button-group">
+                        <a href="index.html" class="btn btn-primary">Go to Home</a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Already Marked Section -->
+            <div id="already-marked-section" class="hidden">
+                <div class="info-container">
+                    <div class="info-icon">ℹ️</div>
+                    <h2>Already Marked</h2>
+                    <p id="already-marked-message">You have already marked your attendance for today.</p>
+                    <div class="button-group">
+                        <a href="index.html" class="btn btn-primary">Go to Home</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Powered by ArcFace Face Recognition | HTTPS Secured</p>
+            <div class="nav-links">
+                <a href="index.html">Home</a> |
+                <a href="login.html">Login</a> |
+                <a href="register.html">Register</a>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Load TensorFlow.js and models -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7"></script>
+    
+    <script src="config.js"></script>
+    <script src="utils.js"></script>
+    <script src="attendance.js"></script>
+</body>
+</html>

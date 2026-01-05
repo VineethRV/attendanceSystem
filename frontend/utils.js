@@ -8,7 +8,7 @@
 function setCookie(name, value, days) {
     const expires = new Date();
     expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-    document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;secure;samesite=strict`;
+    document.cookie = `${name}=${encodeURIComponent(value)};expires=${expires.toUTCString()};path=/;secure;samesite=strict`;
 }
 
 function getCookie(name) {
@@ -17,7 +17,7 @@ function getCookie(name) {
     for (let i = 0; i < ca.length; i++) {
         let c = ca[i];
         while (c.charAt(0) === ' ') c = c.substring(1, c.length);
-        if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
+        if (c.indexOf(nameEQ) === 0) return decodeURIComponent(c.substring(nameEQ.length, c.length));
     }
     return null;
 }
@@ -27,17 +27,63 @@ function deleteCookie(name) {
 }
 
 /**
- * Get stored student ID from cookie
+ * Get stored student ID from cookie (legacy support)
  */
 function getStudentId() {
+    const studentData = getStudentData();
+    if (studentData && studentData.usn) {
+        return studentData.usn;
+    }
     return getCookie(CONFIG.COOKIE_NAME);
 }
 
 /**
- * Save student ID to cookie
+ * Save student ID to cookie (legacy support)
  */
 function saveStudentId(studentId) {
     setCookie(CONFIG.COOKIE_NAME, studentId, CONFIG.COOKIE_EXPIRY_DAYS);
+}
+
+/**
+ * Get complete student data from cookie
+ * Returns: { name, usn, semester, section }
+ */
+function getStudentData() {
+    const data = getCookie(CONFIG.COOKIE_STUDENT_DATA);
+    if (data) {
+        try {
+            return JSON.parse(data);
+        } catch (e) {
+            console.error('Failed to parse student data:', e);
+            return null;
+        }
+    }
+    // Legacy fallback - check old cookie
+    const legacyId = getCookie(CONFIG.COOKIE_NAME);
+    if (legacyId) {
+        return { usn: legacyId, name: '', semester: '', section: '' };
+    }
+    return null;
+}
+
+/**
+ * Save complete student data to cookie
+ * @param {Object} data - { name, usn, semester, section }
+ */
+function saveStudentData(data) {
+    setCookie(CONFIG.COOKIE_STUDENT_DATA, JSON.stringify(data), CONFIG.COOKIE_EXPIRY_DAYS);
+    // Also save USN to legacy cookie for backward compatibility
+    if (data.usn) {
+        saveStudentId(data.usn);
+    }
+}
+
+/**
+ * Clear student data from cookies
+ */
+function clearStudentData() {
+    deleteCookie(CONFIG.COOKIE_STUDENT_DATA);
+    deleteCookie(CONFIG.COOKIE_NAME);
 }
 
 /**
@@ -47,7 +93,7 @@ function showMessage(message, isError = false) {
     const messageDiv = document.getElementById('message');
     if (messageDiv) {
         messageDiv.textContent = message;
-        messageDiv.className = isError ? 'error' : 'success';
+        messageDiv.className = isError ? 'message error' : 'message success';
         messageDiv.style.display = 'block';
         
         // Auto-hide after 5 seconds
@@ -144,6 +190,19 @@ async function loadModels() {
     
     console.log('Loading models...');
     
+    // Check if blazeface is available
+    if (typeof blazeface === 'undefined') {
+        console.warn('BlazeFace not loaded. Face detection may not work.');
+        // Create a mock model for pages that don't need face detection
+        faceDetectionModel = {
+            estimateFaces: async () => []
+        };
+        faceRecognitionModel = {
+            predict: () => null
+        };
+        return;
+    }
+    
     try {
         // Load BlazeFace for face detection
         faceDetectionModel = await blazeface.load();
@@ -152,18 +211,30 @@ async function loadModels() {
         // Load FaceNet-like model for embeddings
         // Note: Using MobileFaceNet as a lightweight alternative
         // You can replace this with a custom trained ArcFace model
-        faceRecognitionModel = await tf.loadGraphModel(
-            'https://tfhub.dev/tensorflow/tfjs-model/facenet/1/default/1',
-            { fromTFHub: true }
-        );
-        console.log('✅ Face recognition model loaded');
+        try {
+            faceRecognitionModel = await tf.loadGraphModel(
+                'https://tfhub.dev/tensorflow/tfjs-model/facenet/1/default/1',
+                { fromTFHub: true }
+            );
+            console.log('✅ Face recognition model loaded');
+        } catch (faceNetError) {
+            console.warn('FaceNet model failed to load, using fallback:', faceNetError);
+            // Use a simplified embedding approach as fallback
+            faceRecognitionModel = null;
+        }
         
     } catch (error) {
         console.error('Model loading error:', error);
         // Fallback: use a simpler approach with pre-trained models
         console.log('Using fallback model...');
-        faceDetectionModel = await blazeface.load();
-        // For demo purposes, we'll use a simplified embedding approach
+        try {
+            faceDetectionModel = await blazeface.load();
+        } catch (fallbackError) {
+            console.error('Fallback model also failed:', fallbackError);
+            faceDetectionModel = {
+                estimateFaces: async () => []
+            };
+        }
     }
 }
 

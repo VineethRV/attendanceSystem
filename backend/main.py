@@ -13,6 +13,8 @@ from datetime import date, datetime
 import uvicorn
 import io
 import pandas as pd
+import csv
+import os
 
 from database import get_db, Student, FaceEmbedding, Attendance, init_database
 from config import config
@@ -23,6 +25,9 @@ from utils import (
     verify_basic_auth,
     format_similarity_scores,
 )
+
+# Path to registration keys CSV
+KEYS_CSV_PATH = os.path.join(os.path.dirname(__file__), 'registration_keys.csv')
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -48,7 +53,11 @@ app.add_middleware(
 class RegistrationRequest(BaseModel):
     """Request model for student registration"""
     student_id: str = Field(..., description="Student ID (format: 1RV23CSXXX)")
+    registration_key: str = Field(..., description="Unique registration key")
     embeddings: List[List[float]] = Field(..., description="List of 5 face embeddings")
+    name: Optional[str] = Field(None, description="Student name")
+    semester: Optional[str] = Field(None, description="Semester")
+    section: Optional[str] = Field(None, description="Section")
     
     @validator("student_id")
     def validate_student_id(cls, v):
@@ -62,6 +71,19 @@ class RegistrationRequest(BaseModel):
         if not is_valid:
             raise ValueError(error_msg)
         return v
+
+
+class KeyValidationRequest(BaseModel):
+    """Request model for key validation"""
+    student_id: str = Field(..., description="Student ID (USN)")
+    registration_key: str = Field(..., description="Registration key")
+
+
+class KeyValidationResponse(BaseModel):
+    """Response model for key validation"""
+    status: str
+    message: str
+    valid: bool
 
 
 class RegistrationResponse(BaseModel):
@@ -126,13 +148,87 @@ class AttendanceResponse(BaseModel):
 async def startup_event():
     """Initialize database on application startup"""
     init_database()
+    
+    # Check if registration keys CSV exists
+    if not os.path.exists(KEYS_CSV_PATH):
+        print("⚠️  Registration keys CSV not found. Generating...")
+        from generate_keys import generate_keys_csv
+        generate_keys_csv(KEYS_CSV_PATH)
+    
     print("✅ Backend started successfully")
     print(f"🔧 Configuration: {config.get_config_summary()}")
 
 
 # ============================================================================
+# Helper Functions for Registration Keys
+# ============================================================================
+
+def validate_registration_key(student_id: str, key: str) -> tuple[bool, str]:
+    """
+    Validate if the registration key matches the USN.
+    Returns (is_valid, message)
+    """
+    if not os.path.exists(KEYS_CSV_PATH):
+        return False, "Registration keys file not found. Please contact admin."
+    
+    try:
+        with open(KEYS_CSV_PATH, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row['usn'].upper() == student_id.upper():
+                    if row['registration_key'] == key:
+                        if row['used'].upper() == 'YES':
+                            return False, "This registration key has already been used."
+                        return True, "Key validated successfully."
+                    else:
+                        return False, "Invalid registration key for this USN."
+            return False, "USN not found in the system."
+    except Exception as e:
+        return False, f"Error validating key: {str(e)}"
+
+
+def mark_key_as_used(student_id: str) -> bool:
+    """Mark a registration key as used after successful registration"""
+    if not os.path.exists(KEYS_CSV_PATH):
+        return False
+    
+    try:
+        rows = []
+        with open(KEYS_CSV_PATH, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+            for row in reader:
+                if row['usn'].upper() == student_id.upper():
+                    row['used'] = 'YES'
+                rows.append(row)
+        
+        with open(KEYS_CSV_PATH, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        
+        return True
+    except Exception as e:
+        print(f"Error marking key as used: {e}")
+        return False
+
+
+# ============================================================================
 # Student APIs
 # ============================================================================
+
+@app.post("/api/validate-key", response_model=KeyValidationResponse)
+async def validate_key(request: KeyValidationRequest):
+    """
+    Validate registration key before allowing face capture.
+    """
+    is_valid, message = validate_registration_key(request.student_id, request.registration_key)
+    
+    return KeyValidationResponse(
+        status="success" if is_valid else "error",
+        message=message,
+        valid=is_valid
+    )
 
 @app.post("/api/register", response_model=RegistrationResponse)
 async def register_student(
@@ -142,11 +238,23 @@ async def register_student(
     """
     Register a new student with face embeddings.
     
+    - Validates registration key
     - Validates student ID format
     - Checks if student already exists
     - Stores 5 face embeddings in database
     """
     student_id = request.student_id
+    
+    # Validate registration key first
+    is_valid, key_message = validate_registration_key(student_id, request.registration_key)
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "status": "error",
+                "message": key_message
+            }
+        )
     
     # Check if student already exists
     existing_student = db.query(Student).filter(Student.student_id == student_id).first()
@@ -179,6 +287,9 @@ async def register_student(
         
         # Commit transaction
         db.commit()
+        
+        # Mark key as used
+        mark_key_as_used(student_id)
         
         return RegistrationResponse(
             status="success",

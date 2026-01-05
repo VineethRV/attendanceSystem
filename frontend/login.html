@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - Attendance System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔐 Student Login</h1>
+            <p class="subtitle">Access Your Attendance Portal</p>
+        </header>
+
+        <div id="message" class="message"></div>
+
+        <div class="card">
+            <div id="login-section">
+                <h2>📋 Enter Your Credentials</h2>
+                <form id="login-form">
+                    <div class="form-group">
+                        <label for="login-usn">USN (Unique Student Number):</label>
+                        <input 
+                            type="text" 
+                            id="login-usn" 
+                            placeholder="e.g., 1RV23CS288"
+                            required
+                            maxlength="20"
+                            autocomplete="username"
+                        >
+                        <small>Enter the USN you used during registration</small>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" id="login-btn" class="btn btn-primary">Login</button>
+                        <a href="index.html" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+
+                <div class="login-footer">
+                    <p>Don't have an account? <a href="register.html">Register here</a></p>
+                </div>
+            </div>
+
+            <!-- Logged In Section -->
+            <div id="logged-in-section" class="hidden">
+                <div class="profile-card">
+                    <div class="profile-icon">👤</div>
+                    <h2>Welcome Back!</h2>
+                    <div id="student-details"></div>
+                    <div class="button-group">
+                        <a href="attendance.html" class="btn btn-success">Mark Attendance</a>
+                        <button id="logout-btn" class="btn btn-secondary">Logout</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Powered by ArcFace Face Recognition | HTTPS Secured</p>
+            <div class="nav-links">
+                <a href="index.html">Home</a> |
+                <a href="register.html">Register</a> |
+                <a href="attendance.html">Attendance</a>
+            </div>
+        </footer>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="utils.js"></script>
+    <script src="login.js"></script>
+</body>
+</html>

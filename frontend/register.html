@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Register - Attendance System</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎓 Student Registration</h1>
+            <p class="subtitle">Register for Face Recognition Attendance</p>
+        </header>
+
+        <div id="message" class="message"></div>
+
+        <div class="card">
+            <!-- Registration Form Section -->
+            <div id="registration-form-section">
+                <h2>📝 Student Information</h2>
+                <form id="registration-form">
+                    <div class="form-group">
+                        <label for="student-name">Full Name:</label>
+                        <input 
+                            type="text" 
+                            id="student-name" 
+                            placeholder="Enter your full name"
+                            required
+                            minlength="2"
+                            maxlength="100"
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="student-usn">USN (Unique Student Number):</label>
+                        <input 
+                            type="text" 
+                            id="student-usn" 
+                            placeholder="e.g., 1RV23CS288"
+                            pattern="1RV23CS[0-9]{3}"
+                            required
+                            maxlength="11"
+                        >
+                        <small>Format: 1RV23CS001 to 1RV23CS450</small>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="registration-key">Registration Key:</label>
+                        <input 
+                            type="text" 
+                            id="registration-key" 
+                            placeholder="Enter your unique registration key"
+                            required
+                            maxlength="20"
+                            style="text-transform: uppercase;"
+                        >
+                        <small>🔑 Enter the unique key provided to you by the admin</small>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="student-semester">Semester:</label>
+                            <select id="student-semester" required>
+                                <option value="">Select Semester</option>
+                                <option value="1">1st Semester</option>
+                                <option value="2">2nd Semester</option>
+                                <option value="3">3rd Semester</option>
+                                <option value="4">4th Semester</option>
+                                <option value="5">5th Semester</option>
+                                <option value="6">6th Semester</option>
+                                <option value="7">7th Semester</option>
+                                <option value="8">8th Semester</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="student-section">Section:</label>
+                            <select id="student-section" required>
+                                <option value="">Select Section</option>
+                                <option value="A">Section A</option>
+                                <option value="B">Section B</option>
+                                <option value="C">Section C</option>
+                                <option value="D">Section D</option>
+                                <option value="E">Section E</option>
+                                <option value="F">Section F</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="button-group">
+                        <button type="submit" id="continue-btn" class="btn btn-primary">Validate Key & Continue</button>
+                        <a href="index.html" class="btn btn-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Camera Capture Section -->
+            <div id="camera-section" class="hidden">
+                <h2 id="camera-title">📸 Capturing Face Images</h2>
+                <p id="capture-status">Position your face in the frame</p>
+                
+                <div class="video-container">
+                    <video id="webcam" autoplay playsinline></video>
+                    <canvas id="overlay"></canvas>
+                </div>
+
+                <div class="progress-container">
+                    <div id="progress-bar" class="progress-bar"></div>
+                    <p id="progress-text">0 / 5 images captured</p>
+                </div>
+
+                <div class="button-group">
+                    <button id="capture-btn" class="btn btn-primary hidden">Capture</button>
+                    <button id="cancel-camera-btn" class="btn btn-secondary">Cancel</button>
+                </div>
+            </div>
+
+            <!-- Success Section -->
+            <div id="success-section" class="hidden">
+                <div class="success-container">
+                    <div class="success-icon">✅</div>
+                    <h2>Registration Successful!</h2>
+                    <p id="success-message">You have been registered successfully.</p>
+                    <div class="button-group">
+                        <a href="attendance.html" class="btn btn-success">Mark Attendance</a>
+                        <a href="index.html" class="btn btn-secondary">Go to Home</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>Powered by ArcFace Face Recognition | HTTPS Secured</p>
+            <div class="nav-links">
+                <a href="index.html">Home</a> |
+                <a href="login.html">Login</a> |
+                <a href="attendance.html">Attendance</a>
+            </div>
+        </footer>
+    </div>
+
+    <!-- Load TensorFlow.js and models -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.13.0"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7"></script>
+    
+    <script src="config.js"></script>
+    <script src="utils.js"></script>
+    <script src="register.js"></script>
+</body>
+</html>
