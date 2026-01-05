@@ -1,529 +1,407 @@
-"""
-Main FastAPI application for the attendance system backend.
-Implements registration, verification, and admin APIs.
-"""
-
-from fastapi import FastAPI, Depends, HTTPException, Header, Response
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
-from pydantic import BaseModel, Field, validator
-from typing import List, Optional
-from datetime import date, datetime
-import uvicorn
+from flask import Flask, request, jsonify, Response, make_response
+from flask_cors import CORS
+import json
+import base64
 import io
-import pandas as pd
+import csv
+import sqlite3
 
-from database import get_db, Student, FaceEmbedding, Attendance, init_database
-from config import config
-from utils import (
-    verify_face,
-    validate_embedding,
-    validate_embeddings_list,
-    verify_basic_auth,
-    format_similarity_scores,
-)
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="Classroom Attendance System API",
-    description="Face recognition-based attendance system",
-    version="1.0.0",
-)
-
-# Configure CORS for local development
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=config.ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+import config
+import db
+import crud
 
 
-# ============================================================================
-# Request/Response Models
-# ============================================================================
+def create_app():
+    app = Flask(__name__)
+    CORS(app, origins=config.ALLOWED_ORIGINS)
 
-class RegistrationRequest(BaseModel):
-    """Request model for student registration"""
-    student_id: str = Field(..., description="Student ID (format: 1RV23CSXXX)")
-    embeddings: List[List[float]] = Field(..., description="List of 5 face embeddings")
-    
-    @validator("student_id")
-    def validate_student_id(cls, v):
-        if not config.validate_student_id(v):
-            raise ValueError(f"Invalid student ID format. Expected: {config.STUDENT_ID_PATTERN}")
-        return v
-    
-    @validator("embeddings")
-    def validate_embeddings(cls, v):
-        is_valid, error_msg = validate_embeddings_list(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class RegistrationResponse(BaseModel):
-    """Response model for registration"""
-    status: str
-    message: str
-    student_id: str
-
-
-class VerificationRequest(BaseModel):
-    """Request model for attendance verification"""
-    student_id: str = Field(..., description="Student ID")
-    live_embedding: List[float] = Field(..., description="Live face embedding")
-    
-    @validator("student_id")
-    def validate_student_id(cls, v):
-        if not config.validate_student_id(v):
-            raise ValueError(f"Invalid student ID format")
-        return v
-    
-    @validator("live_embedding")
-    def validate_live_embedding(cls, v):
-        is_valid, error_msg = validate_embedding(v)
-        if not is_valid:
-            raise ValueError(error_msg)
-        return v
-
-
-class VerificationResponse(BaseModel):
-    """Response model for attendance verification"""
-    status: str
-    message: str
-    similarity_scores: Optional[List[float]] = None
-    matches: Optional[int] = None
-    confidence: Optional[float] = None
-    matches_found: Optional[int] = None
-    best_match: Optional[float] = None
-    marked_at: Optional[str] = None
-
-
-class AttendanceRecord(BaseModel):
-    """Model for a single attendance record"""
-    student_id: str
-    present: bool
-    marked_at: Optional[datetime] = None
-
-
-class AttendanceResponse(BaseModel):
-    """Response model for attendance query"""
-    date: str
-    total_students: int
-    present: int
-    absent: int
-    attendance: List[AttendanceRecord]
-
-
-# ============================================================================
-# Startup Event
-# ============================================================================
-
-@app.on_event("startup")
-async def startup_event():
-    """Initialize database on application startup"""
-    init_database()
-    print("✅ Backend started successfully")
-    print(f"🔧 Configuration: {config.get_config_summary()}")
-
-
-# ============================================================================
-# Student APIs
-# ============================================================================
-
-@app.post("/api/register", response_model=RegistrationResponse)
-async def register_student(
-    request: RegistrationRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Register a new student with face embeddings.
-    
-    - Validates student ID format
-    - Checks if student already exists
-    - Stores 5 face embeddings in database
-    """
-    student_id = request.student_id
-    
-    # Check if student already exists
-    existing_student = db.query(Student).filter(Student.student_id == student_id).first()
-    if existing_student:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "status": "error",
-                "message": "Student already registered. Use overwrite option if you want to re-register."
-            }
-        )
-    
-    try:
-        # Create student record
-        new_student = Student(
-            student_id=student_id,
-            registered_at=datetime.utcnow()
-        )
-        db.add(new_student)
-        
-        # Create face embedding records
-        for i, embedding in enumerate(request.embeddings):
-            face_embedding = FaceEmbedding(
-                student_id=student_id,
-                embedding_index=i + 1,  # 1-indexed
-                embedding_vector=embedding,
-                created_at=datetime.utcnow()
-            )
-            db.add(face_embedding)
-        
-        # Commit transaction
-        db.commit()
-        
-        return RegistrationResponse(
-            status="success",
-            message="Student registered successfully",
-            student_id=student_id
-        )
-    
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "status": "error",
-                "message": f"Registration failed: {str(e)}"
-            }
-        )
-
-
-@app.post("/api/verify", response_model=VerificationResponse)
-async def verify_attendance(
-    request: VerificationRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Verify student identity and mark attendance.
-    
-    - Retrieves stored embeddings
-    - Compares with live embedding using cosine similarity
-    - Marks attendance if verification succeeds
-    - Enforces once-per-day rule
-    """
-    student_id = request.student_id
-    today = date.today()
-    
-    # Check if student is registered
-    student = db.query(Student).filter(Student.student_id == student_id).first()
-    if not student:
-        return VerificationResponse(
-            status="not_registered",
-            message="Student not registered. Please register first.",
-            similarity_scores=None,
-            matches=None
-        )
-    
-    # Check if attendance already marked today
-    existing_attendance = db.query(Attendance).filter(
-        Attendance.student_id == student_id,
-        Attendance.date == today
-    ).first()
-    
-    if existing_attendance:
-        return VerificationResponse(
-            status="already_marked",
-            message="Attendance already marked for today",
-            similarity_scores=None,
-            matches=None,
-            marked_at=existing_attendance.marked_at.isoformat() if existing_attendance.marked_at else None
-        )
-    
-    # Retrieve stored embeddings
-    stored_embeddings_records = db.query(FaceEmbedding).filter(
-        FaceEmbedding.student_id == student_id
-    ).order_by(FaceEmbedding.embedding_index).all()
-    
-    if len(stored_embeddings_records) != config.NUM_EMBEDDINGS:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "status": "error",
-                "message": "Incomplete registration data. Please re-register."
-            }
-        )
-    
-    # Extract embedding vectors
-    stored_embeddings = [record.embedding_vector for record in stored_embeddings_records]
-    
-    # Perform face verification
-    is_verified, similarity_scores, num_matches = verify_face(
-        request.live_embedding,
-        stored_embeddings
-    )
-    
-    if not is_verified:
-        best_similarity = max(similarity_scores) if similarity_scores else 0.0
-        return VerificationResponse(
-            status="verification_failed",
-            message="Biometric verification failed",
-            similarity_scores=format_similarity_scores(similarity_scores),
-            matches=num_matches,
-            matches_found=num_matches,
-            best_match=float(best_similarity),
-            confidence=float(best_similarity)
-        )
-    
-    # Mark attendance
-    try:
-        attendance_record = Attendance(
-            student_id=student_id,
-            date=today,
-            marked_at=datetime.utcnow(),
-            present=True
-        )
-        db.add(attendance_record)
-        db.commit()
-        
-        best_similarity = max(similarity_scores) if similarity_scores else 0.0
-        return VerificationResponse(
-            status="ok",
-            message="Attendance marked successfully",
-            similarity_scores=format_similarity_scores(similarity_scores),
-            matches=num_matches,
-            matches_found=num_matches,
-            confidence=float(best_similarity)
-        )
-    
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "status": "error",
-                "message": f"Failed to mark attendance: {str(e)}"
-            }
-        )
-
-
-# ============================================================================
-# Admin APIs
-# ============================================================================
-
-def require_admin_auth(authorization: Optional[str] = Header(None)):
-    """Dependency to require admin authentication"""
-    if not verify_basic_auth(authorization):
-        raise HTTPException(
-            status_code=401,
-            detail="Unauthorized",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-
-
-@app.get("/api/admin/attendance", response_model=AttendanceResponse)
-async def get_attendance(
-    date_str: Optional[str] = None,
-    student_id: Optional[str] = None,
-    db: Session = Depends(get_db),
-    _auth: None = Depends(require_admin_auth)
-):
-    """
-    Get attendance records for a specific date or student.
-    Requires admin authentication.
-    
-    Query parameters:
-    - date: Date in YYYY-MM-DD format (defaults to today)
-    - student_id: Filter by specific student (optional)
-    """
-    # Parse date
-    if date_str:
+    # Ensure CORS headers are always set for allowed origins, including for
+    # requests where Flask-CORS might not inject them (HEAD or other edge cases).
+    @app.after_request
+    def _apply_cors_headers(response):
+        origin = request.headers.get('Origin')
         try:
-            query_date = datetime.strptime(date_str, "%Y-%m-%d").date()
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid date format. Use YYYY-MM-DD"
-            )
-    else:
-        query_date = date.today()
-    
-    # Build query
-    if student_id:
-        # Get attendance for specific student on specific date
-        attendance_records = db.query(Attendance).filter(
-            Attendance.student_id == student_id,
-            Attendance.date == query_date
-        ).all()
-    else:
-        # Get all attendance for specific date
-        attendance_records = db.query(Attendance).filter(
-            Attendance.date == query_date
-        ).all()
-    
-    # Get total registered students
-    total_students = db.query(Student).count()
-    
-    # Format response
-    attendance_list = [
-        AttendanceRecord(
-            student_id=record.student_id,
-            present=record.present,
-            marked_at=record.marked_at
+            allowed = config.ALLOWED_ORIGINS
+        except Exception:
+            allowed = []
+        if origin and origin in allowed:
+            response.headers['Access-Control-Allow-Origin'] = origin
+            response.headers['Access-Control-Allow-Methods'] = 'GET,POST,OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type,Authorization'
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+        return response
+
+    def _get_client_ip():
+        xff = request.headers.get("X-Forwarded-For")
+        if xff:
+            return xff.split(",")[0].strip()
+        return request.remote_addr
+
+    def _require_basic_auth():
+        auth = request.headers.get("Authorization")
+        if not auth or not auth.startswith("Basic "):
+            return None
+        try:
+            token = auth.split(" ", 1)[1]
+            decoded = base64.b64decode(token).decode("utf-8")
+            user, pwd = decoded.split(":", 1)
+            return (user, pwd)
+        except Exception:
+            return None
+
+    def _check_admin():
+        creds = _require_basic_auth()
+        if not creds:
+            return False
+        user, pwd = creds
+        return user == config.ADMIN_USER and pwd == config.ADMIN_PASS
+
+    @app.route("/", methods=["GET"])
+    def index():
+        return jsonify({"status": "ok", "backend": config.BACKEND_URL})
+
+    @app.route("/api/health", methods=["GET"])
+    def health():
+        return jsonify({"status": "healthy"})
+
+    @app.route("/api/register", methods=["POST"])
+    def register():
+        # Debug: log request metadata to help diagnose CORS / TLS issues
+        try:
+            print("--- /api/register incoming request ---")
+            print("URL:", request.url)
+            print("Remote Addr:", request.remote_addr)
+            print("Is secure (HTTPS):", request.is_secure)
+            print("Origin header:", request.headers.get('Origin'))
+            # print headers (truncated)
+            for k, v in list(request.headers.items())[:20]:
+                print(f"Header: {k}: {v}")
+            raw = request.get_data()
+            try:
+                print("Raw body (first 1000 bytes):", raw[:1000])
+            except Exception:
+                print("Raw body present (binary) length:", len(raw))
+            data = request.get_json(force=True)
+            print("Parsed JSON:", data)
+        except Exception as e:
+            print("Error parsing request JSON:", e)
+            raw = request.get_data()
+            print("Raw body on error (first 200 bytes):", raw[:200])
+            return jsonify({"error": "Invalid JSON", "details": str(e)}), 400
+
+        if not isinstance(data, dict):
+            return jsonify({"error": "JSON body must be an object"}), 400
+
+        # Accept either legacy fields (name/usn/embedding) or the frontend's
+        # `student_id` and `embeddings` payload.
+        name = data.get("name") or data.get("Name")
+        usn = (
+            data.get("usn")
+            or data.get("USN")
+            or data.get("student_id")
+            or data.get("studentId")
+            or data.get("id")
         )
-        for record in attendance_records
-    ]
-    
-    present_count = sum(1 for record in attendance_records if record.present)
-    absent_count = total_students - present_count
-    
-    return AttendanceResponse(
-        date=query_date.strftime("%Y-%m-%d"),
-        total_students=total_students,
-        present=present_count,
-        absent=absent_count,
-        attendance=attendance_list
-    )
-
-
-@app.get("/api/admin/export")
-async def export_attendance(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    db: Session = Depends(get_db),
-    _auth: None = Depends(require_admin_auth)
-):
-    """
-    Export attendance data as CSV.
-    Requires admin authentication.
-    
-    Query parameters:
-    - start_date: Start date in YYYY-MM-DD format
-    - end_date: End date in YYYY-MM-DD format
-    """
-    # Parse dates
-    try:
-        if start_date:
-            start = datetime.strptime(start_date, "%Y-%m-%d").date()
-        else:
-            start = date.today()
-        
-        if end_date:
-            end = datetime.strptime(end_date, "%Y-%m-%d").date()
-        else:
-            end = date.today()
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid date format. Use YYYY-MM-DD"
+        embeddings = (
+            data.get("embeddings")
+            or data.get("embeds")
+            or data.get("embedding")
+            or data.get("embedding_vector")
+            or data.get("Embedding")
         )
-    
-    # Query attendance records
-    attendance_records = db.query(Attendance).filter(
-        Attendance.date >= start,
-        Attendance.date <= end
-    ).order_by(Attendance.date, Attendance.student_id).all()
-    
-    # Convert to DataFrame
-    data = [
-        {
-            "student_id": record.student_id,
-            "date": record.date.strftime("%Y-%m-%d"),
-            "present": record.present,
-            "marked_at": record.marked_at.strftime("%Y-%m-%d %H:%M:%S")
-        }
-        for record in attendance_records
-    ]
-    
-    df = pd.DataFrame(data)
-    
-    # Generate CSV
-    csv_buffer = io.StringIO()
-    df.to_csv(csv_buffer, index=False)
-    csv_buffer.seek(0)
-    
-    # Return as streaming response
-    filename = f"attendance_{start}_{end}.csv"
-    return StreamingResponse(
-        iter([csv_buffer.getvalue()]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"}
-    )
 
+        if not usn or embeddings is None:
+            return jsonify({"error": "Missing required fields: student_id/usn and embeddings/embedding"}), 400
 
-@app.get("/api/admin/stats")
-async def get_statistics(
-    db: Session = Depends(get_db),
-    _auth: None = Depends(require_admin_auth)
-):
-    """
-    Get overall system statistics.
-    Requires admin authentication.
-    """
-    total_students = db.query(Student).count()
-    total_attendance_records = db.query(Attendance).count()
-    today_attendance = db.query(Attendance).filter(Attendance.date == date.today()).count()
-    
-    return {
-        "total_registered_students": total_students,
-        "total_attendance_records": total_attendance_records,
-        "today_attendance": today_attendance,
-        "config": config.get_config_summary()
-    }
+        # Normalize embeddings: support a single vector or a list of captured vectors.
+        try:
+            import ast
 
+            def _to_float_list(v):
+                if isinstance(v, list):
+                    return [float(x) for x in v]
+                if isinstance(v, str):
+                    try:
+                        return [float(x) for x in json.loads(v)]
+                    except Exception:
+                        return [float(x) for x in ast.literal_eval(v)]
+                raise ValueError("Unsupported embedding type")
 
-# ============================================================================
-# Health Check
-# ============================================================================
+            # If embeddings is a list of vectors, average them element-wise.
+            if isinstance(embeddings, list) and len(embeddings) > 0 and all(isinstance(el, list) for el in embeddings):
+                vecs = [_to_float_list(el) for el in embeddings]
+                if not vecs:
+                    raise ValueError("Empty embeddings list")
+                dim = len(vecs[0])
+                for v in vecs:
+                    if len(v) != dim:
+                        raise ValueError("Embedding vectors must have the same dimension")
+                avg = [sum(v[i] for v in vecs) / len(vecs) for i in range(dim)]
+                vector = avg
+            else:
+                # Single vector (list or JSON-string)
+                vector = _to_float_list(embeddings)
+        except Exception as e:
+            return jsonify({"error": "Invalid embeddings format", "details": str(e)}), 400
 
-@app.get("/")
-async def root():
-    """Health check endpoint"""
-    return {
-        "status": "ok",
-        "service": "Attendance System Backend",
-        "version": "1.0.0"
-    }
+        try:
+            embedding_str = json.dumps(vector)
+        except Exception as e:
+            return jsonify({"error": "Failed to serialize embedding", "details": str(e)}), 400
 
+        client_ip = _get_client_ip()
 
-@app.get("/api/health")
-async def health_check():
-    """Detailed health check"""
-    return {
-        "status": "healthy",
-        "timestamp": datetime.utcnow().isoformat(),
-        "config": config.get_config_summary()
-    }
+        try:
+            existing = crud.get_student(usn)
+            if existing:
+                crud.update_student_embedding(usn, embedding_str)
+            else:
+                # name/class_name optional for registration flow
+                crud.add_student(usn, name or None, None, embedding_str)
+        except sqlite3.IntegrityError as e:
+            return jsonify({"error": "Database integrity error", "details": str(e)}), 400
+        except Exception as e:
+            return jsonify({"error": "Database error", "details": str(e)}), 500
 
+        return jsonify({"status": "ok", "usn": usn, "ip": client_ip}), 201
 
-# ============================================================================
-# Main Entry Point
-# ============================================================================
+    @app.route("/api/verify", methods=["POST"])
+    def verify():
+        # Debug: log request metadata for troubleshooting
+        try:
+            print("--- /api/verify incoming request ---")
+            print("URL:", request.url)
+            print("Remote Addr:", request.remote_addr)
+            print("Is secure (HTTPS):", request.is_secure)
+            print("Origin header:", request.headers.get('Origin'))
+            for k, v in list(request.headers.items())[:20]:
+                print(f"Header: {k}: {v}")
+            raw = request.get_data()
+            try:
+                print("Raw body (first 1000 bytes):", raw[:1000])
+            except Exception:
+                print("Raw body present (binary) length:", len(raw))
+            payload = request.get_json(force=True)
+            print("Parsed JSON:", payload)
+        except Exception as e:
+            print("Error parsing request JSON:", e)
+            raw = request.get_data()
+            print("Raw body on error (first 200 bytes):", raw[:200])
+            return jsonify({"error": "Invalid JSON", "details": str(e)}), 400
+
+        if not isinstance(payload, dict):
+            return jsonify({"error": "JSON object expected"}), 400
+
+        # Accept multiple field names from different frontends
+        usn = payload.get("usn") or payload.get("USN") or payload.get("student_id") or payload.get("studentId")
+        live_embedding = payload.get("embedding") or payload.get("live_embedding") or payload.get("liveEmbedding") or payload.get("liveEmbeds") or payload.get("live_embeddings")
+
+        # If frontend sends multiple live embeddings, average them into one vector
+        try:
+            if live_embedding is None and "live_embeddings" in payload:
+                le = payload.get("live_embeddings")
+                if isinstance(le, list) and len(le) > 0 and isinstance(le[0], list):
+                    length = len(le[0])
+                    avg = [0.0] * length
+                    for vec in le:
+                        if not isinstance(vec, list) or len(vec) != length:
+                            raise ValueError("Inconsistent live embedding lengths")
+                        for i, v in enumerate(vec):
+                            avg[i] += float(v)
+                    live_embedding = [x / len(le) for x in avg]
+        except Exception as e:
+            return jsonify({"error": "Invalid live embedding format", "details": str(e)}), 400
+
+        if not usn or live_embedding is None:
+            return jsonify({"error": "Missing required fields: usn/student_id and embedding"}), 400
+
+        client_ip = _get_client_ip()
+
+        from datetime import datetime
+        from math import sqrt
+        import ast
+
+        def same_subnet(ip1: str, ip2: str, mask_bits: int = 24) -> bool:
+            try:
+                a = ip1.split('.')
+                b = ip2.split('.')
+                if len(a) == 4 and len(b) == 4 and mask_bits == 24:
+                    return a[0:3] == b[0:3]
+                return ip1 == ip2
+            except Exception:
+                return False
+
+        def to_float_list(v):
+            if isinstance(v, list):
+                return [float(x) for x in v]
+            if isinstance(v, str):
+                try:
+                    return [float(x) for x in json.loads(v)]
+                except Exception:
+                    try:
+                        return [float(x) for x in ast.literal_eval(v)]
+                    except Exception:
+                        raise ValueError("Cannot parse embedding")
+            raise ValueError("Unsupported embedding type")
+
+        def cosine_similarity(a, b):
+            if not a or not b or len(a) != len(b):
+                return 0.0
+            dot = sum(x * y for x, y in zip(a, b))
+            na = sqrt(sum(x * x for x in a))
+            nb = sqrt(sum(y * y for y in b))
+            if na == 0 or nb == 0:
+                return 0.0
+            return dot / (na * nb)
+
+        student = crud.get_student(usn)
+        if not student:
+            return jsonify({"error": "Unknown USN"}), 404
+
+        class_name = student.get("class_name")
+        if not class_name:
+            return jsonify({"error": "Student has no class assigned"}), 400
+
+        now = datetime.now()
+        now_str = now.strftime("%H:%M")
+        schedule = crud.get_class_schedule(class_name, now_str)
+        if not schedule:
+            schedules = crud.list_schedules_for_class(class_name)
+            schedule = None
+            for s in schedules:
+                st = s.get("start_time") or ""
+                if st.startswith(now.strftime("%H")):
+                    schedule = s
+                    break
+
+        if not schedule:
+            return jsonify({"error": "No active class found for this student at this time"}), 400
+
+        classroom = schedule.get("classroom")
+        if not classroom:
+            return jsonify({"error": "Classroom not set for the scheduled class"}), 400
+
+        room = crud.get_classroom(classroom)
+        if not room or not room.get("router_ip"):
+            return jsonify({"error": "Router IP not configured for classroom"}), 400
+
+        router_ip = room.get("router_ip")
+
+        if not same_subnet(router_ip, client_ip):
+            return jsonify({"error": "Client IP not on expected classroom subnet", "client_ip": client_ip, "router_ip": router_ip}), 403
+
+        try:
+            stored_emb = student.get("embedding")
+            stored_vec = to_float_list(stored_emb) if stored_emb is not None else []
+            live_vec = to_float_list(live_embedding)
+        except ValueError as e:
+            return jsonify({"error": "Invalid embedding format", "details": str(e)}), 400
+
+        sim = cosine_similarity(stored_vec, live_vec)
+        THRESHOLD = 0.75
+        if sim < THRESHOLD:
+            return jsonify({"error": "Embedding mismatch", "similarity": sim}), 401
+
+        subject = schedule.get("subject")
+        if not subject:
+            return jsonify({"error": "Subject not defined for this class"}), 400
+
+        try:
+            existing = crud.get_attendance(usn, subject)
+            if existing and existing.get("percentage") is not None:
+                new_pct = min(100.0, float(existing.get("percentage")) + 1.0)
+            else:
+                new_pct = 100.0
+            crud.set_attendance(usn, subject, new_pct)
+        except Exception as e:
+            return jsonify({"error": "Failed to update attendance", "details": str(e)}), 500
+
+        return jsonify({"status": "verified", "usn": usn, "subject": subject, "similarity": sim, "attendance": new_pct}), 200
+
+    @app.route("/api/admin/stats", methods=["GET"])
+    def admin_stats():
+        if not _check_admin():
+            return Response("Unauthorized", 401, {"WWW-Authenticate": "Basic realm=\"Admin\""})
+        conn = db.get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT COUNT(*) FROM students")
+            students = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM classrooms")
+            classrooms = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM classes")
+            classes = cur.fetchone()[0]
+            cur.execute("SELECT COUNT(*) FROM attendance")
+            attendance = cur.fetchone()[0]
+        finally:
+            conn.close()
+        return jsonify({"students": students, "classrooms": classrooms, "classes": classes, "attendance_records": attendance})
+
+    @app.route("/api/admin/attendance", methods=["GET"])
+    def admin_attendance():
+        if not _check_admin():
+            return Response("Unauthorized", 401, {"WWW-Authenticate": "Basic realm=\"Admin\""})
+        conn = db.get_connection()
+        cur = conn.cursor()
+        try:
+            cur.execute("SELECT usn, subject, percentage FROM attendance")
+            data = [dict(zip([c[0] for c in cur.description], row)) for row in cur.fetchall()]
+        finally:
+            conn.close()
+        return jsonify(data)
+
+    @app.route("/api/admin/export", methods=["GET"])
+    def admin_export():
+        if not _check_admin():
+            return Response("Unauthorized", 401, {"WWW-Authenticate": "Basic realm=\"Admin\""})
+        table = request.args.get("table", "students")
+        conn = db.get_connection()
+        cur = conn.cursor()
+        try:
+            if table == "students":
+                cur.execute("SELECT usn, name, class_name, embedding FROM students")
+            elif table == "attendance":
+                cur.execute("SELECT usn, subject, percentage FROM attendance")
+            else:
+                return jsonify({"error": "unknown table"}), 400
+            rows = cur.fetchall()
+            headers = [c[0] for c in cur.description]
+        finally:
+            conn.close()
+
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(headers)
+        for r in rows:
+            writer.writerow(r)
+        csv_data = buf.getvalue()
+        resp = make_response(csv_data)
+        resp.headers["Content-Type"] = "text/csv"
+        resp.headers["Content-Disposition"] = f"attachment; filename={table}.csv"
+        return resp
+
+    return app
+
 
 if __name__ == "__main__":
-    # Run with HTTPS (required for webcam access)
+    import argparse
     import os
-    
-    # Check if SSL certificates exist
-    cert_file = os.path.join(os.path.dirname(__file__), "..", "certs", "cert.pem")
-    key_file = os.path.join(os.path.dirname(__file__), "..", "certs", "key.pem")
-    
-    if os.path.exists(cert_file) and os.path.exists(key_file):
-        # Run with HTTPS
-        uvicorn.run(
-            "main:app",
-            host=config.HOST,
-            port=config.PORT,
-            reload=True,
-            ssl_certfile=cert_file,
-            ssl_keyfile=key_file
-        )
-    else:
-        # Fallback to HTTP with warning
-        print("⚠️  WARNING: SSL certificates not found!")
-        print("⚠️  Webcam access requires HTTPS. Generate certificates with:")
-        print("   cd certs && python generate_certs.py")
-        uvicorn.run(
-            "main:app",
-            host=config.HOST,
-            port=config.PORT,
-            reload=True
-        )
+    parser = argparse.ArgumentParser(description="Run main_fixed server")
+    parser.add_argument("--host", default=os.environ.get("HOST", "0.0.0.0"))
+    parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", "8000")))
+    parser.add_argument("--cert", help="Path to TLS certificate (PEM)")
+    parser.add_argument("--key", help="Path to TLS key (PEM)")
+    args = parser.parse_args()
+
+    ssl_cert = args.cert or os.environ.get("SSL_CERT")
+    ssl_key = args.key or os.environ.get("SSL_KEY")
+    ssl_context = None
+    if ssl_cert and ssl_key:
+        if os.path.exists(ssl_cert) and os.path.exists(ssl_key):
+            ssl_context = (ssl_cert, ssl_key)
+        else:
+            import logging
+            logging.error("SSL cert/key not found: %s %s", ssl_cert, ssl_key)
+
+    app = create_app()
+    app.run(host=args.host, port=args.port, ssl_context=ssl_context)
